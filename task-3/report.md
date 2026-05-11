@@ -97,7 +97,7 @@ Expectation: prepared-statement parameter binding, string columns receive the va
 
 ```sql
 INSERT INTO app.learning_materials (...) VALUES (
-  '215303354', '"https://martinfowler.com/..."', ..., '"intermediate"'
+  '<chat_id>', '"https://martinfowler.com/..."', ..., '"intermediate"'
 )
 ```
 
