@@ -1,0 +1,235 @@
+{
+  "name": "Senior Interview Coach — Task 3",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message", "callback_query"],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [-400, 0],
+      "id": "node-telegram-trigger",
+      "name": "Telegram Trigger",
+      "webhookId": "task3-telegram-trigger",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_TG_CRED_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-start",
+                    "leftValue": "={{ $json.message?.text || '' }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "/start"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-learn",
+                    "leftValue": "={{ $json.message?.text || '' }}",
+                    "rightValue": "/learn",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "/learn"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-quiz",
+                    "leftValue": "={{ $json.message?.text || '' }}",
+                    "rightValue": "/quiz",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "/quiz"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-stats",
+                    "leftValue": "={{ $json.message?.text || '' }}",
+                    "rightValue": "/stats",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "/stats"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "other"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [-200, 0],
+      "id": "node-route-command",
+      "name": "Route by command"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "👋 *Welcome to Senior Interview Coach!*\n\nI'm an AI-powered learning bot for senior backend interview prep — built on n8n + Claude (Opus 4.7 Teacher, Haiku 4.5 Examiner).\n\n*What I can do:*\n\n📚 `/learn <url>` — submit any article / docs / blog post URL → I'll extract the content and produce a structured summary (5-7 key points + main concepts + difficulty) calibrated to the senior backend bar.\n\n🎯 `/quiz` — pick from your saved materials → I'll generate 5 interview-style multiple-choice questions specific to that material, with intelligent answer validation and explanations.\n\n📊 `/stats` — open your learning dashboard (weak topics, score history, time-per-topic).\n\n*Try me right now:*\n`/learn https://martinfowler.com/articles/microservices.html`",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [200, -300],
+      "id": "node-reply-start",
+      "name": "Reply /start",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_TG_CRED_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ ($('Telegram Trigger').item.json.message?.chat?.id) ?? ($('Telegram Trigger').item.json.callback_query?.message?.chat?.id) }}",
+        "text": "🚧 *Coming soon*\n\nThis command is wired up but the AI flow is being built incrementally per the project plan. Day 2-3 will land `/learn` (Teacher summarization), Day 4-5 will land `/quiz` (Examiner question generation) and `/stats` (analytics dashboard).\n\nFor now, only `/start` is live — try it.\n\nTrack progress: https://github.com/Warhammer2000/Task-3",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [200, 100],
+      "id": "node-reply-stub",
+      "name": "Reply stub (coming soon)",
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_TG_CRED_ID",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Route by command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by command": {
+      "main": [
+        [
+          {
+            "node": "Reply /start",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply stub (coming soon)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply stub (coming soon)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply stub (coming soon)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply stub (coming soon)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "active": false,
+  "tags": []
+}
