@@ -2,9 +2,20 @@
 
 > AI-powered personal learning assistant. Submit a URL → get a senior-engineer-grade summary → take an interview-style quiz → track weak topics on a Mini App dashboard.
 
-**Live bot**: [@seniorprepcoach_bot](https://t.me/seniorprepcoach_bot)
 **Built for**: Vention AI Challenge 2.0 · Task 3 — *workflowing with n8n*
-**Tech write-up**: see [`report.md`](./report.md) for decisions, what worked, what didn't.
+
+## Submission artifacts (quick links)
+
+| What | Where |
+|------|-------|
+| **Live Telegram bot** | [@seniorprepcoach_bot](https://t.me/seniorprepcoach_bot) — tap **Start**, send `/learn <url>`, then `/quiz` |
+| **n8n workflow JSON** | [`workflow.json`](./workflow.json) — 95 nodes, re-imports cleanly into any n8n instance |
+| **Build report** | [`report.md`](./report.md) — tools, what worked, what didn't, 11 distinct bug classes documented, full pool-architecture write-up in §5.9 |
+| **Database schema** | [`db/init/01_schema.sql`](./db/init/01_schema.sql) — 6 tables + 1 view, auto-loaded on first Postgres boot |
+| **Docker compose** | [`docker-compose.yml`](./docker-compose.yml) — n8n + Postgres + ngrok |
+| **Build tooling** | [`tools/`](./tools/) — 23 versioned patch scripts + [`tools/README.md`](./tools/README.md) explaining each |
+
+The bot is live right now — easiest way to evaluate is to message it directly. The walkthrough below shows what you'll see.
 
 ---
 
