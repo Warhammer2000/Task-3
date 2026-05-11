@@ -388,10 +388,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT id, title, difficulty FROM app.learning_materials WHERE chat_id = $1 ORDER BY added_at DESC LIMIT 20;",
-        "options": {
-          "queryReplacement": "={{ $json.message.chat.id }}"
-        }
+        "query": "SELECT id, title, difficulty FROM app.learning_materials WHERE chat_id = {{ $json.message.chat.id }} ORDER BY added_at DESC LIMIT 20;",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -454,10 +452,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT m.id AS material_id, m.chat_id, m.title, m.content, m.summary_json, m.difficulty\nFROM app.learning_materials m\nWHERE m.id = $1;",
-        "options": {
-          "queryReplacement": "={{ Number(($json.callback_query.data || '').split(':')[1]) }}"
-        }
+        "query": "SELECT m.id AS material_id, m.chat_id, m.title, m.content, m.summary_json, m.difficulty FROM app.learning_materials m WHERE m.id = {{ Number(($json.callback_query.data || '').split(':')[1]) }};",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -497,7 +493,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 3500,\n  \"system\": \"You are the Examiner in an AI-powered learning assistant for senior backend engineers preparing for staff-tier interviews. Given a material title, summary, and full content, generate EXACTLY 5 multiple-choice questions that probe whether the reader internalized the material at senior interview level.\\n\\nSTYLE non-negotiable:\\n1. NO trivia. No year/acronym recall.\\n2. PROBE understanding: apply concept to scenario, compare approaches, identify failure mode, spot what breaks if assumption changes.\\n3. INTERVIEW FRAMING: phrase as interviewer would speak it.\\n4. PLAUSIBLE DISTRACTORS: wrong options represent real misconceptions.\\n5. ONE CORRECT ANSWER each (single best answer).\\n6. EXPLANATIONS MUST TEACH why right is right AND why distractors are wrong.\\n7. NO HARDCODING.\\n\\nOutput JSON with EXACTLY this schema:\\n{\\n  \\\"questions\\\": [\\n    { \\\"id\\\": \\\"Q1\\\", \\\"question\\\": \\\"<=280 chars\\\", \\\"options\\\": { \\\"A\\\": \\\"<=120\\\", \\\"B\\\": \\\"<=120\\\", \\\"C\\\": \\\"<=120\\\", \\\"D\\\": \\\"<=120\\\" }, \\\"correctAnswer\\\": \\\"A\\\"|\\\"B\\\"|\\\"C\\\"|\\\"D\\\", \\\"explanation\\\": \\\"<2-4 sentences>\\\" }, ...Q2-Q5\\n  ]\\n}\\n\\nExactly 5 questions, IDs Q1-Q5, 4 options A-D each, correctAnswer single A-D letter. Distribute correct answers across A/B/C/D.\\n\\nOutput ONLY the JSON. No fences, no commentary.\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": {{ JSON.stringify(\"TITLE: \" + $json.title + \"\\nDIFFICULTY: \" + $json.difficulty + \"\\n\\nKEY POINTS:\\n\" + ($json.summary_json.key_points || []).join(\"\\n\") + \"\\n\\nCONCEPTS: \" + ($json.summary_json.main_concepts || []).join(\", \") + \"\\n\\nFULL CONTENT:\\n\" + $json.content) }} }\n  ]\n}",
+        "jsonBody": "={{ $json.examiner_body }}",
         "options": {
           "timeout": 90000
         }
@@ -527,10 +523,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO app.quizzes (material_id, chat_id, questions, started_at)\nVALUES ($1, $2, $3::jsonb, now())\nRETURNING id, material_id, chat_id, questions;",
-        "options": {
-          "queryReplacement": "={{ $json.material_id }}, {{ $json.chat_id }}, {{ JSON.stringify(JSON.stringify({ questions: $json.questions })) }}"
-        }
+        "query": "INSERT INTO app.quizzes (material_id, chat_id, questions, started_at)\nVALUES (\n  {{ $json.material_id }},\n  {{ $json.chat_id }},\n  '{{ JSON.stringify({ questions: $json.questions }).replace(/'/g, \"''\") }}'::jsonb,\n  now()\n)\nRETURNING id, material_id, chat_id, questions;",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -606,10 +600,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT id, material_id, chat_id, questions, started_at, finished_at FROM app.quizzes WHERE id = $1;",
-        "options": {
-          "queryReplacement": "={{ $json.quiz_id }}"
-        }
+        "query": "SELECT id, material_id, chat_id, questions, started_at, finished_at FROM app.quizzes WHERE id = {{ $json.quiz_id }};",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -642,10 +634,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO app.quiz_answers (quiz_id, question_id, user_answer, correct)\nVALUES ($1, $2, $3, $4)\nON CONFLICT (quiz_id, question_id) DO NOTHING\nRETURNING id;",
-        "options": {
-          "queryReplacement": "={{ $json.quiz_id }}, {{ JSON.stringify($json.question_id) }}, {{ JSON.stringify($json.user_answer) }}, {{ $json.correct }}"
-        }
+        "query": "INSERT INTO app.quiz_answers (quiz_id, question_id, user_answer, correct)\nVALUES (\n  {{ $json.quiz_id }},\n  '{{ $json.question_id.replace(/'/g, \"''\") }}',\n  '{{ $json.user_answer.replace(/'/g, \"''\") }}',\n  {{ $json.correct }}\n)\nON CONFLICT (quiz_id, question_id) DO NOTHING\nRETURNING id;",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -699,10 +689,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH agg AS (\n  SELECT quiz_id,\n         ROUND(100.0 * SUM(CASE WHEN correct THEN 1 ELSE 0 END) / COUNT(*))::INT AS score_pct\n  FROM app.quiz_answers\n  WHERE quiz_id = $1\n  GROUP BY quiz_id\n)\nUPDATE app.quizzes q\nSET finished_at = now(), score_pct = agg.score_pct\nFROM agg\nWHERE q.id = agg.quiz_id\nRETURNING q.id, q.score_pct;",
-        "options": {
-          "queryReplacement": "={{ $('ans: validate').item.json.quiz_id }}"
-        }
+        "query": "WITH agg AS (\n  SELECT quiz_id,\n         ROUND(100.0 * SUM(CASE WHEN correct THEN 1 ELSE 0 END) / COUNT(*))::INT AS score_pct\n  FROM app.quiz_answers\n  WHERE quiz_id = {{ $('ans: validate').item.json.quiz_id }}\n  GROUP BY quiz_id\n)\nUPDATE app.quizzes q\nSET finished_at = now(), score_pct = agg.score_pct\nFROM agg\nWHERE q.id = agg.quiz_id\nRETURNING q.id, q.score_pct;",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -722,10 +710,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT qa.question_id, qa.user_answer, qa.correct, q.questions FROM app.quiz_answers qa JOIN app.quizzes q ON q.id = qa.quiz_id WHERE qa.quiz_id = $1 ORDER BY qa.question_id;",
-        "options": {
-          "queryReplacement": "={{ $('ans: validate').item.json.quiz_id }}"
-        }
+        "query": "SELECT qa.question_id, qa.user_answer, qa.correct, q.questions\nFROM app.quiz_answers qa\nJOIN app.quizzes q ON q.id = qa.quiz_id\nWHERE qa.quiz_id = {{ $('ans: validate').item.json.quiz_id }}\nORDER BY qa.question_id;",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -826,10 +812,8 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT materials_count, quizzes_taken, COALESCE(avg_score_pct, 0) AS avg_score_pct, last_quiz_at, advanced_materials, intermediate_materials, beginner_materials FROM app.v_user_stats WHERE chat_id = $1;",
-        "options": {
-          "queryReplacement": "={{ $json.message.chat.id }}"
-        }
+        "query": "SELECT materials_count, quizzes_taken, COALESCE(avg_score_pct, 0) AS avg_score_pct, last_quiz_at, advanced_materials, intermediate_materials, beginner_materials FROM app.v_user_stats WHERE chat_id = {{ $json.message.chat.id }};",
+        "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
@@ -986,6 +970,19 @@
       ],
       "id": "node-learn-ack",
       "name": "/learn: send ack (loading)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Anthropic Examiner request body as a JSON string here.\nconst mat = $input.first().json;\n\nconst systemPrompt = \"You are the Examiner in an AI-powered learning assistant for senior backend engineers preparing for staff-tier interviews. Given a material title, summary, and full content, generate EXACTLY 5 multiple-choice questions that probe whether the reader internalized the material at senior interview level.\\n\\nSTYLE non-negotiable:\\n1. NO trivia. No year/acronym recall.\\n2. PROBE understanding: apply concept to scenario, compare approaches, identify failure mode, spot what breaks if assumption changes.\\n3. INTERVIEW FRAMING: phrase as interviewer would speak it.\\n4. PLAUSIBLE DISTRACTORS: wrong options represent real misconceptions.\\n5. ONE CORRECT ANSWER each (single best answer).\\n6. EXPLANATIONS MUST TEACH why right is right AND why distractors are wrong.\\n7. NO HARDCODING.\\n\\nOutput JSON with EXACTLY this schema:\\n{\\n  \\\"questions\\\": [\\n    { \\\"id\\\": \\\"Q1\\\", \\\"question\\\": \\\"<=280 chars\\\", \\\"options\\\": { \\\"A\\\": \\\"<=120\\\", \\\"B\\\": \\\"<=120\\\", \\\"C\\\": \\\"<=120\\\", \\\"D\\\": \\\"<=120\\\" }, \\\"correctAnswer\\\": \\\"A\\\"|\\\"B\\\"|\\\"C\\\"|\\\"D\\\", \\\"explanation\\\": \\\"<2-4 sentences>\\\" }, ...Q2-Q5\\n  ]\\n}\\n\\nExactly 5 questions, IDs Q1-Q5, 4 options A-D each, correctAnswer single A-D letter. Distribute correct answers across A/B/C/D.\\n\\nOutput ONLY the JSON. No fences, no commentary.\";\n\nconst summary = mat.summary_json || {};\nconst keyPoints = Array.isArray(summary.key_points) ? summary.key_points.join('\\n') : '';\nconst concepts = Array.isArray(summary.main_concepts) ? summary.main_concepts.join(', ') : '';\nconst userContent = 'TITLE: ' + (mat.title || '') + '\\nDIFFICULTY: ' + (mat.difficulty || '') + '\\n\\nKEY POINTS:\\n' + keyPoints + '\\n\\nCONCEPTS: ' + concepts + '\\n\\nFULL CONTENT:\\n' + (mat.content || '');\n\nconst examiner_body = JSON.stringify({\n  model: 'claude-haiku-4-5-20251001',\n  max_tokens: 3500,\n  system: systemPrompt,\n  messages: [{ role: 'user', content: userContent }]\n});\n\nreturn [{ json: { ...mat, examiner_body } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        600
+      ],
+      "id": "node-pick-buildbody",
+      "name": "pick: build examiner body"
     }
   ],
   "connections": {
@@ -1168,7 +1165,7 @@
       "main": [
         [
           {
-            "node": "pick: Examiner (Haiku)",
+            "node": "pick: build examiner body",
             "type": "main",
             "index": 0
           }
@@ -1352,6 +1349,17 @@
         [
           {
             "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "pick: build examiner body": {
+      "main": [
+        [
+          {
+            "node": "pick: Examiner (Haiku)",
             "type": "main",
             "index": 0
           }
