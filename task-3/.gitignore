@@ -1,0 +1,31 @@
+# Environment & secrets (NEVER commit)
+.env
+.env.local
+.env.*.local
+
+# Docker volume contents (mounted by docker-compose volumes block)
+n8n_data/
+postgres_data/
+data/
+
+# n8n local runtime
+.n8n/
+
+# Logs
+*.log
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local Docker overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Backups
+*.bak
+*.tmp

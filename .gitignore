@@ -1,0 +1,37 @@
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# n8n runtime data (mounted volume)
+task-3/.n8n/
+task-3/n8n_data/
+task-3/postgres_data/
+task-3/data/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Backup / scratch
+*.bak
+*.tmp
+*~
+
+# Docker overrides
+docker-compose.override.yml
+docker-compose.local.yml
