@@ -70,6 +70,12 @@ services:
       # to construct correct webhook URLs and cookie security flags).
       N8N_PROXY_HOPS: 1
 
+      # Allow workflows to read process env vars via {{ $env.NAME }} expression.
+      # Default is to block — we override so Code / HTTP Request nodes can
+      # read ANTHROPIC_API_KEY directly from the container env without
+      # needing a separate n8n credential.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+
       # Sane defaults
       GENERIC_TIMEZONE: ${TZ:-Asia/Tashkent}
       TZ: ${TZ:-Asia/Tashkent}
