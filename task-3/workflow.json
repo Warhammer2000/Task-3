@@ -3,7 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "updates": ["message", "callback_query"],
+        "updates": ["message", "callback_query", "message_reaction"],
         "additionalFields": {}
       },
       "type": "n8n-nodes-base.telegramTrigger",
@@ -137,7 +137,8 @@
         "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
         "text": "👋 *Welcome to Senior Interview Coach!*\n\nI'm an AI-powered learning bot for senior backend interview prep — built on n8n + Claude (Opus 4.7 Teacher, Haiku 4.5 Examiner).\n\n*What I can do:*\n\n📚 `/learn <url>` — submit any article / docs / blog post URL → I'll extract the content and produce a structured summary (5-7 key points + main concepts + difficulty) calibrated to the senior backend bar.\n\n🎯 `/quiz` — pick from your saved materials → I'll generate 5 interview-style multiple-choice questions specific to that material, with intelligent answer validation and explanations.\n\n📊 `/stats` — open your learning dashboard (weak topics, score history, time-per-topic).\n\n*Try me right now:*\n`/learn https://martinfowler.com/articles/microservices.html`",
         "additionalFields": {
-          "parse_mode": "Markdown"
+          "parse_mode": "Markdown",
+          "appendAttribution": false
         }
       },
       "type": "n8n-nodes-base.telegram",
@@ -157,7 +158,8 @@
         "chatId": "={{ ($('Telegram Trigger').item.json.message?.chat?.id) ?? ($('Telegram Trigger').item.json.callback_query?.message?.chat?.id) }}",
         "text": "🚧 *Coming soon*\n\nThis command is wired up but the AI flow is being built incrementally per the project plan. Day 2-3 will land `/learn` (Teacher summarization), Day 4-5 will land `/quiz` (Examiner question generation) and `/stats` (analytics dashboard).\n\nFor now, only `/start` is live — try it.\n\nTrack progress: https://github.com/Warhammer2000/Task-3",
         "additionalFields": {
-          "parse_mode": "Markdown"
+          "parse_mode": "Markdown",
+          "appendAttribution": false
         }
       },
       "type": "n8n-nodes-base.telegram",
