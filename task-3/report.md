@@ -163,6 +163,44 @@ Documented as a Mahoraga anti-pattern from Task 2's retro — and reproduced her
 
 **Lesson**: the Mahoraga rule (submit-day-of-brief = anti-pattern) is correct. Overriding it costs time and bandwidth. Worth the cost only when the upside is concrete (leaderboard signal, deadline) and the operator goes in with eyes open.
 
+### 4.7 `parse_mode: "Markdown"` silently drops `message_effect_id`
+
+Adding fullscreen quiz-score effects (🔥 / ✨ / 💡 / 🥊 — Bot API 7.0) looked trivial on paper: add one field to `sendMessage`. In practice, the message was delivered without animation and without an error. The Telegram API response had no `effect_id` field even though the request included `message_effect_id`.
+
+**The diff that proved it**: TEST messages sent via curl with `message_effect_id` and `parse_mode: "Markdown"` returned a Message object with no `effect_id`. The same body with `parse_mode: "HTML"` returned a Message object **with** `effect_id`. Telegram silently strips the effect on legacy Markdown, no error returned.
+
+**The fix**: rewrite `ans: format results` Code node to emit HTML (`<b>`, `<i>`) instead of Markdown (`*`, `_`). Then a second issue surfaced — the existing `ans: send results` was an n8n Telegram node v1.2 that hardcodes `parse_mode: "Markdown"` and ignores unknown fields like `message_effect_id`. Replaced with an HTTP Request node that passes the full JSON body.
+
+A third issue: long messages with `parse_mode: "HTML"` still didn't auto-play the effect — they showed only the static effect indicator at the bottom. **Solution**: split the result into two messages — a short headline (≈80 chars, carries the effect, animates reliably) + the long breakdown (no effect, carries the per-question detail) — with an n8n `Wait` node (3.5 seconds) between them so the animation completes before the breakdown shoves the headline out of view.
+
+**Lesson**: Bot API 7.0+ features have undocumented interaction edges with legacy `parse_mode` and with the n8n Telegram node's hardcoded defaults. When using effects/reactions, go straight to HTTP Request nodes and HTML formatting. Confirmation via `curl` + response-field inspection beats reading docs.
+
+### 4.8 HTML `<url>` placeholder in i18n strings breaks Telegram's entity parser
+
+After full RU/EN localization (see §5.7), the score-breakdown message started throwing `Bad Request: can't parse entities: Unsupported start tag "url" at byte offset 5037`. The i18n dictionary contained user-facing strings like `Open /stats or /learn <url> for a new topic.` — natural in Markdown, fatal in HTML where `<url>` looks like an opening tag.
+
+**The fix**: replace `<url>` with `[URL]` across all i18n strings. Safe in both Markdown and HTML modes, reads naturally in both English and Russian.
+
+**Lesson**: when switching parse modes, audit every literal `<` / `>` in template text, not just user input.
+
+### 4.9 Inserting a Postgres lookup node mid-chain replaces `$input` for the downstream node
+
+To add localization, five `lang: pg load *` Postgres lookup nodes were inserted **between** existing chain steps (e.g. between `/learn: jina fetch` and `/learn: extract title+body`). Each downstream Code node that referenced `$input.first().json` was suddenly reading the lang-lookup result (`{lang: 'en'}`) instead of the original upstream data — because n8n's `$input` always points to the **immediately previous** node, not the conceptual source.
+
+The Teacher HTTP Request failed with `The value in the "JSON Body" field is not valid JSON` because the upstream Code node returned `teacher_body: undefined` (it tried to parse jina output but got the lang row instead).
+
+**The fix**: replace `$input.first().json` with `$('<original_upstream_name>').item.json` in every affected Code node (`/learn: extract title+body`, `pick: build examiner body`, `/learn: format summary`, `/stats: format`, `ans: format results`). Now they reach back by name, surviving any future mid-chain node insertion.
+
+**Lesson**: `$input.first()` in n8n Code nodes is a **positional** reference. If the chain shape might change, prefer named references via `$('NodeName').item.json` — they're rewire-resilient.
+
+### 4.10 n8n's webhook re-registration is workflow-toggle-driven, not container-restart-driven
+
+When the bot's `setWebhook` was overwritten manually (via curl) to add `inline_query` to `allowed_updates`, the call also overwrote n8n's `secret_token`. Now every Telegram delivery returned `403 Forbidden — Provided secret is not valid`. Restarting the n8n container didn't help — n8n on startup loads the existing webhook state from DB but does **not** re-call Telegram's `setWebhook`.
+
+**The fix**: deactivate the workflow (`n8n update:workflow --id=X --active=false` + container restart) and reactivate (`--active=true` + container restart). On reactivation, n8n's Telegram Trigger node makes a fresh `setWebhook` call with its own `secret_token` and the current `allowed_updates` list from the node config.
+
+**Lesson**: never manually `setWebhook` against a Telegram-Trigger-managed bot. Change `updates` in the trigger node config + toggle workflow off/on. Or use Telegram's `getWebhookInfo` to inspect, never to mutate.
+
 ---
 
 ## 5. Notable decisions
@@ -203,15 +241,45 @@ The format-summary helper escapes the four legacy specials before insertion. V2 
 
 Brief says "project placed in a `task-3` folder". I created a standalone repo `Warhammer2000/Task-3` (mirroring Task 1 pattern, per operator decision), with the project literally inside a `task-3/` subfolder. Both R22 (literal folder name) and the "one repo, one project" submission-link cleanliness are satisfied.
 
+### 5.7 Localization architecture: lookup-per-branch, dict-in-Code-node
+
+Localization wasn't in the brief but the operator (Russian speaker) shipped to a Russian-speaking audience. Three architectural choices:
+
+1. **Storage in `app.user_state.lang`** (TEXT, CHECK `IN ('en','ru')`, default `'en'`). Persists across sessions; survives container restarts. Default `'en'` so first-time users get a known starting point.
+2. **Lookup-per-branch via `lang: pg load *` Postgres nodes**, not a global lookup. Five lookup nodes (`/learn`, `/stats`, `/quiz`, `pick`, `ans`) each inject `lang` into their downstream branch. Cheaper than a global pre-Route lookup (no DB call on every update), and survives the Route Switch's input-shape constraints.
+3. **String dictionary inlined in each Code node** (instead of a shared lib). n8n Code nodes are independent JS sandboxes — no shared imports. The dict is defined as `const T = { en: {...}, ru: {...} }` at the top of each format-X node. Copy-paste cost paid once during the patch; runtime perf is zero overhead.
+
+LLM-generated content (Teacher summary, Examiner questions/options/explanations) is localized via a **language directive appended to the system prompt**:
+
+```js
+let systemPrompt = "...the full English system prompt...";
+systemPrompt += lang === 'ru'
+  ? '\n\nAll output strings ... must be in Russian. Difficulty value stays English.'
+  : '';
+```
+
+Difficulty enum stays English (`beginner` / `intermediate` / `advanced`) — it's a DB constraint value, not user-facing text. Quiz option letters stay A/B/C/D — they're keys, not labels.
+
+**Why a `/lang` command + inline-keyboard picker** instead of auto-detect from Telegram's `from.language_code`: auto-detect would be wrong for the Russian operator who reads English content but prefers Russian UI, and vice versa. Explicit user choice → durable preference. The `/learn` ack message still uses `from.language_code` as a one-shot fallback because lang isn't loaded until later in the chain.
+
+### 5.8 Timing-warning ack messages
+
+After full localization shipped, the `/learn` ack still said "30–60 seconds" — under-promising for content-heavy URLs where Teacher takes 1–3 min. The quiz-pick callback had no ack at all, so users sat staring at a frozen UI for 30–120 seconds while the Examiner generated 5 questions.
+
+Two new Code nodes (`/learn: build ack text`, `pick: build ack text`) emit localized "1–3 minutes, grab a coffee ☕" messages, wired in parallel with the LLM-call chain. Users now see explicit timing + reassurance.
+
+**Lesson**: every async LLM call ≥ 5 seconds needs a visible-progress ack. Under-promising on timing is worse than over-promising — users abandon a "30-second wait" sooner than they abandon a "1–3 min, grab a coffee" wait.
+
 ---
 
 ## 6. What's intentionally out of scope (for this submission window)
 
-- **`/stats` as a Telegram Web App (Mini App)** — designed in the architecture doc, the schema view `v_user_stats` is ready, but the static HTML host (GitHub Pages, separate deploy) didn't fit into the submit-day window. The current `/stats` command sends a text dashboard with bar-chart emoji bars instead — same data, less wow.
-- **Message reactions on summaries** — `app.material_reactions` table exists, `Telegram Trigger.updates` includes `message_reaction`, but the capture handler wasn't built. "Topics you loved" surfaces would have hooked into this.
-- **Cyrillic / non-Latin URL test coverage** — extraction was verified against martinfowler.com (English); the workflow should handle other languages via jina.ai but wasn't smoke-tested on Cyrillic / Chinese / etc.
-- **Mobile UI test (iPhone / Android)** — Telegram client is consistent across platforms, but the inline button widths weren't verified on a small physical screen.
+- **Cyrillic / non-Latin URL test coverage** — extraction was verified against martinfowler.com (English) and metanit.com (Russian). The workflow handles both via jina.ai. Chinese / Arabic / Hindi URLs weren't smoke-tested.
+- **Mini App localization** — the Mini App HTML labels (`Materials`, `Quizzes`, `Avg score`, etc.) stayed English even when bot UX is set to Russian. Adding a `?lang=ru` query param to the dashboard URL and threading it through `miniapp: render HTML` would close this — deferred for time.
+- **Inline mode localization** — `@bot search` results' description text (`No materials match`, `intermediate`, etc.) is English-only. Same fix shape as Mini App.
 - **Multi-user concurrency stress test** — 3 chat_id interleaved was sketched in the SELF-REVIEW; one-user smoke is what shipped.
+- **Telegram Desktop message-effects** — fullscreen animations auto-play reliably on mobile clients but Telegram Desktop 6.8.1 shows only the static effect indicator for the headline message. Confirmed via diff testing — short test messages did animate on desktop, but long format-results headlines don't. Likely a Desktop-specific throttling after consecutive poll interactions. Out of scope to fix client-side; documented for the demo (which shows mobile primarily).
+- **`/lang` confirmation effect** — the lang-set confirmation could ship with its own ✨ effect for delight. Skipped because the lang change is itself the signal.
 
 These are honest deferrals, not unknowns — each has a concrete next step if/when this gets a second iteration.
 
@@ -223,12 +291,31 @@ The combination used: **self-hosted n8n on Docker + Postgres for persistence + n
 
 Most Task 3 submissions will be n8n cloud trials with bundled GPT tokens — fastest path to a working demo, hardest path to anything you'd actually deploy. Going self-hosted is one extra hour of setup that turns the submission into a portfolio piece.
 
+### Bot-API-v10 features that other submissions won't ship
+
+Beyond the brief's required behaviour, this bot uses six Bot API 7.0+ features that most participants will not touch:
+
+1. **`setMessageReaction`** (Bot API 7.0, Mar 2024) — bot reacts 🤔 on `/learn` receipt and 🎓 on summary delivery. The bot "breathes".
+2. **`message_effect_id`** (Bot API 7.0) — fullscreen animation tier on quiz score: 🔥 (80%+), ✨ (60–79%), 💡 (40–59%), 🥊 (<40%).
+3. **Telegram Mini App** via `web_app` button — `/stats` opens an embedded HTML dashboard with Chart.js (doughnut + gradient-fill line), 28-day GitHub-style activity heatmap, 7 unlock-style achievement badges, count-up animations, glassmorphism cards, Telegram theme integration, MainButton + HapticFeedback wired.
+4. **Inline mode** — `@seniorprepcoach_bot <query>` from any chat searches the user's library by title. Results carry a Start-quiz callback button.
+5. **`sendPoll` quiz mode** — instead of inline-keyboard answer buttons, quizzes use Telegram's native poll UI (`type: 'quiz'`, single correct option, instant feedback animation).
+6. **Full RU/EN localization** — Teacher + Examiner prompts get language directive; all UX strings localized via dict; `/lang` command flips preference.
+
+Each of those took 10–60 minutes to implement and 0–2 hours to debug (see §4.7–§4.10). Total marginal cost on top of the base brief: ~5 hours. Total marginal score impact (peer-relative): substantial — none of these features are required, and few will be voluntarily implemented.
+
+### Engineering-process differentiator: 16 versioned patch scripts
+
+n8n's editor UI gets slow after ~40 nodes (this workflow ended at 77). Re-importing JSON via the UI clobbers credentials. So the iteration loop was: dump current `nodes` + `connections` from Postgres → run a Python patch script → write back → `docker restart task3-n8n`. Total cycle: ~15 seconds vs ~2 min via UI.
+
+The full set of 16 patches lives in [`tools/patches/`](./tools/patches/) with a [`tools/README.md`](./tools/README.md) that explains each patch's purpose, the bug it fixed, and the order of application. Anyone cloning this repo can rebuild the workflow from a base or learn from the documented failure modes.
+
 ---
 
 ## 8. Honest postscript
 
 This submission shipped on the day of brief, against my own retrospective rule. The base reqs are covered (R1–R22 mapped in `ai-challenge-2026/task-3/SELF-REVIEW.md`), the bot is live, the workflow JSON re-imports cleanly into a fresh n8n instance. Known limitations are listed in §6 above — they're documented, not hidden.
 
-The build process exposed four distinct classes of n8n quirk (§4.1–§4.5), each fixed at the point of discovery and documented here. Anyone hitting the same issues on a future task should find this report short to scan.
+The build process exposed **ten** distinct classes of n8n / Bot API quirk (§4.1–§4.10), each fixed at the point of discovery and documented here. Anyone hitting the same issues on a future task should find this report short to scan.
 
-The Mahoraga loop applies after this submission too — a Task 3 retrospective will land in `ai-challenge-2026/retrospectives/task-3.md` once the leaderboard data arrives. Class of mistakes from §4 will be encoded as adaptations to `meta/n8n/footguns.md` (a new file, mirroring `meta/lovable/footguns.md`'s structure) so the next n8n task starts with a 5-entry pre-flight ledger instead of zero.
+The Mahoraga loop applies after this submission too — a Task 3 retrospective will land in `ai-challenge-2026/retrospectives/task-3.md` once the leaderboard data arrives. Classes of mistakes from §4 will be encoded as adaptations to `meta/n8n/footguns.md` (a new file, mirroring `meta/lovable/footguns.md`'s structure) so the next n8n task starts with a 10-entry pre-flight ledger instead of zero.
