@@ -4,6 +4,16 @@
 
 **Built for**: Vention AI Challenge 2.0 · Task 3 — *workflowing with n8n*
 
+## What this submission is (and where the "code" lives)
+
+n8n is a runtime *and* storage in one. The product of this build isn't compiled code that runs on a server — it's a single JSON document (`workflow.json`) that n8n executes directly. Import it, set three credentials, activate, done. No build step, no deploy step.
+
+- **The artefact**: [`workflow.json`](./workflow.json) — 95 nodes, all logic + wiring + prompts inline. Self-contained.
+- **Where it runs**: any n8n instance (self-hosted Docker, n8n cloud, etc.). After import, n8n stores the JSON in its `workflow_entity` table and executes from there.
+- **What `tools/patches/` is**: the build history. 31 versioned Python scripts that incrementally constructed `workflow.json` via direct DB updates (faster iteration than re-importing through the UI on every change). Documented in [`tools/README.md`](./tools/README.md). **Not required to run the bot** — just kept for traceability and to show how the JSON was assembled.
+
+So if a reviewer asks *"where's the code"*, the answer is: it's `workflow.json`. The patches are the equivalent of git history *for the workflow itself*.
+
 ## Submission artifacts (quick links)
 
 | What | Where |
@@ -139,13 +149,30 @@ Three containers come up:
 
 ### 3. Import the workflow
 
-1. Open the n8n editor at `https://<your-ngrok-domain>` (you'll set an email + password on first visit).
-2. **Workflows** → **Import from File** → select `task-3/workflow.json`.
-3. Open the imported workflow. Three credentials need binding (n8n shows red borders):
-   - **Telegram Bot** credential → paste `${TELEGRAM_BOT_TOKEN}`.
-   - **Anthropic** credential → paste `${ANTHROPIC_API_KEY}`.
-   - **Postgres** credential → host `postgres`, port `5432`, user/db/password from `.env`.
-4. Toggle **Active** (top-right). On activation, n8n calls Telegram's `setWebhook` with the ngrok URL + `allowed_updates: [message, inline_query, callback_query, poll_answer]`.
+1. Open the n8n editor at `https://<your-ngrok-domain>` (set email + password on first visit).
+2. **Workflows** → **Import from File** → select `task-3/workflow.json`. n8n loads all 95 nodes + connections.
+3. Open the imported workflow. Two **credentials** need binding (n8n shows red borders on affected nodes):
+
+   **a) Telegram Bot** credential (used by the Telegram Trigger node):
+   - Click any Telegram Trigger node → Credentials panel → **Create New**
+   - Name: e.g. `Telegram Bot - Task 3`
+   - Access Token: paste `${TELEGRAM_BOT_TOKEN}` value from `.env`
+   - Save → assign to the trigger node
+
+   **b) Postgres** credential (used by ~20 Postgres nodes):
+   - Click any Postgres node → Credentials → **Create New**
+   - Name: e.g. `Postgres - Task 3`
+   - Host: `postgres` (the Docker service name)
+   - Port: `5432` (internal Docker network port, not the host-mapped `5434`)
+   - Database: `n8n` (or value of `POSTGRES_DB` from `.env`)
+   - User: `n8n` (or value of `POSTGRES_USER`)
+   - Password: value of `POSTGRES_PASSWORD` from `.env`
+   - SSL: disabled
+   - Save → n8n will auto-bind to other Postgres nodes with matching credential type
+
+   **No Anthropic credential is needed** — the workflow's HTTP Request nodes calling `api.anthropic.com` read the API key directly from `{{ $env.ANTHROPIC_API_KEY }}` (from the container's environment). The docker-compose file passes `ANTHROPIC_API_KEY` from `.env` into the n8n container automatically. Same pattern for `TELEGRAM_BOT_TOKEN` in HTTP-Request-based send nodes — it's read from `$env`.
+
+4. Toggle **Active** (top-right). On activation, n8n's Telegram Trigger node calls Telegram's `setWebhook` with the ngrok URL + `allowed_updates: [message, inline_query, callback_query, poll_answer]`. The Mini-App webhook (`/webhook/dashboard`) and pool-refill webhook (`/webhook/pool-refill`) become live on the same domain.
 
 ### 4. (Optional) Enable inline mode
 

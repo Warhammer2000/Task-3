@@ -372,7 +372,61 @@ The full set of 16 patches lives in [`tools/patches/`](./tools/patches/) with a 
 
 ---
 
-## 8. Honest postscript
+## 8. Engineering model: where "the code" lives
+
+A common question on n8n submissions: *"if I clone this repo, where do I look to understand what runs?"* — worth surfacing the answer here because it isn't obvious for people coming from a code-first background.
+
+**n8n is runtime and storage in one.** When you run `docker compose up`, the n8n container boots and begins reading workflows from its own Postgres `workflow_entity` table (which lives in the same Postgres instance the bot uses for `app.*` — separate schema, same DB). Each workflow row holds `nodes` (a JSON array of node configs) and `connections` (a JSON object of edges). n8n's execution engine reads these tables and runs the graph.
+
+The single artifact that defines "what this bot is" is therefore `task-3/workflow.json` — 95 nodes + connections in a self-contained file. To make the bot run on a fresh machine:
+
+```bash
+docker compose up -d                         # boots n8n + postgres + ngrok
+# open n8n editor → Workflows → Import from File → workflow.json
+# bind 2 credentials (Telegram Bot, Postgres), activate
+```
+
+That's it. No build step, no deploy step, no compilation, no application server to launch. The JSON *is* the application.
+
+### What `tools/patches/` actually is
+
+31 versioned Python scripts. They are **not the application**; they are the **build history of the application**. The reason they exist:
+
+n8n's editor UI gets slow once a workflow crosses ~40 nodes (we ended at 95). Re-importing JSON via the UI clobbers credentials, so iteration via UI export-edit-import is a 2-minute round-trip *and* a credentials-rebinding chore. My iteration loop was:
+
+1. Dump current `workflow_entity.nodes` + `connections` from Postgres (`psql ... -t -A -c "SELECT nodes FROM workflow_entity..."`). ~0.5 sec.
+2. Run a Python script that loads the JSON, mutates it (add nodes, rewire edges, replace `jsCode` / `query` strings), writes back. ~0.1 sec.
+3. `UPDATE workflow_entity SET nodes = ..., connections = ...` via psql. ~0.5 sec.
+4. `docker restart task3-n8n`. ~12 sec.
+
+Total cycle: ~15 seconds from idea to running. Vs. ~2 minutes through the UI plus credential rebinding. Over 31 iterations that's the difference between 8 minutes and 60+ minutes of mechanical UI clicking.
+
+The patches are *git history for the workflow.json file itself*. Each patch addresses exactly one design decision or fixes exactly one bug, with a docstring explaining what and why. `tools/README.md` lists all 31 in a table with the root-cause sentence for each fix.
+
+### Where does the bot "live"?
+
+In production-like terms:
+
+- The **bot's logic** lives in `workflow_entity.nodes` (a Postgres JSON column). The n8n container reads from there, executes per Telegram webhook, writes results back to `app.*` tables.
+- The **user-facing endpoint** is the ngrok HTTPS URL (`seniorprepcoach.ngrok.dev` here) which forwards into the n8n container on Docker's bridge network.
+- The **data** (saved materials, quizzes, answers, pool, user_state.lang) lives in `app.*` tables in the same Postgres.
+- The **workflow.json file in this repo** is a snapshot — exported with `psql ... SELECT json_build_object(...) > workflow.json`. Importing this snapshot into any other n8n instance recreates the same bot's logic exactly.
+
+So my dev loop was: edit DB directly (production-live), then at end of session export to `workflow.json` and `git commit`. Production = live DB; repo = portable snapshot.
+
+### What to point reviewers at
+
+| Question | Answer |
+|----------|--------|
+| Where's the code that runs? | [`workflow.json`](./workflow.json) — n8n imports it, no further build. |
+| Where do I see the build history? | [`tools/patches/`](./tools/patches/) (31 scripts, [`tools/README.md`](./tools/README.md) explains each). |
+| Where's the schema? | [`db/init/01_schema.sql`](./db/init/01_schema.sql) — auto-loaded on first Postgres boot. |
+| Where's the architecture diagram? | This file's [§7](#7-stack-level-differentiator) lists components; [`README.md`](./README.md) has the ASCII data flow. |
+| What does each Code node do? | Open `workflow.json` in n8n editor — each node has its full JS / SQL / config inline. |
+
+---
+
+## 9. Honest postscript
 
 This submission shipped on the day of brief, against my own retrospective rule. The base reqs are covered (R1–R22 mapped in `ai-challenge-2026/task-3/SELF-REVIEW.md`), the bot is live, the workflow JSON re-imports cleanly into a fresh n8n instance. Known limitations are listed in §6 above — they're documented, not hidden.
 
