@@ -39,8 +39,9 @@
 
 ## What makes this submission different
 
-Beyond the brief's required behavior, this bot uses Bot API 7.0+ features that **most participants will not touch**:
+Beyond the brief's required behavior, this bot uses Bot API 7.0+ features that **most participants will not touch**, plus a self-replenishing quiz cache that delivers near-instant quizzes:
 
+- **Quiz pool with self-replenishing buffer** — after the very first `/learn` on a topic, a background worker pre-generates **3 quizzes** for that material via Claude Sonnet 4.5. When the user taps "Take quiz now", the bot atomically claims a pre-generated quiz from the pool (`DELETE...FOR UPDATE SKIP LOCKED RETURNING`) and ships Q1 in **<500ms** instead of waiting 30-60s for an Examiner call. Each claim fires a top-up refill webhook that maintains pool depth = 3. **First user pays the wait; subsequent users get instant quizzes.** Concurrency-safe (two users on same material claim different pool entries). Pool variety enforced via temperature 0.9 + uniqueness directive passing all prior question stems to Sonnet + post-parse Jaccard-bigram similarity check. See [`report.md` §5.9](./report.md) for the full architecture.
 - **`setMessageReaction`** — bot reacts 🤔 on `/learn` receipt and 🎓 when the summary is delivered, on the user's original message. The bot "breathes".
 - **`message_effect_id`** — quiz score headline ships with a fullscreen animation: 🔥 fire (80%+), ✨ confetti (60–79%), 💡 thumbs up (40–59%), 🥊 thumbs down (<40%). Mobile clients render the animation; desktop falls back to a static effect icon.
 - **Telegram Mini App** (`web_app` button) — `/stats` opens an embedded HTML dashboard inside Telegram via the Mini App platform: KPI cards with count-up animations, doughnut for difficulty mix, gradient-fill score-trend line, GitHub-style 28-day activity heatmap, 7 achievement badges that unlock based on real data, library and recent-quiz listings. Theme params from Telegram are inherited so it adapts to the user's dark/light client.
@@ -63,18 +64,21 @@ n8n (Docker, v2.19.5, self-hosted)
        │
        ├─► HTTP Request → r.jina.ai/<url>         (content extraction)
        ├─► HTTP Request → api.anthropic.com       (Teacher: Opus 4.7)
-       ├─► HTTP Request → api.anthropic.com       (Examiner: Haiku 4.5)
+       ├─► HTTP Request → api.anthropic.com       (Examiner: Sonnet 4.5,
+       │                                           in BOTH pool refill chain
+       │                                           and slow-path fallback)
        ├─► Postgres 18-alpine (Docker)            (persistence layer)
        │       └─ app.learning_materials, app.quizzes, app.quiz_answers,
-       │          app.user_state, app.material_reactions, app.v_user_stats
+       │          app.user_state, app.material_reactions, app.v_user_stats,
+       │          app.quiz_pool (pre-generated quiz buffer)
        ├─► HTTP Request → api.telegram.org        (sendMessage, sendPoll,
        │                                           setMessageReaction,
        │                                           answerInlineQuery, answerCallbackQuery)
-       └─► Webhook node serving GET /dashboard    (Mini App HTML)
-                  └─ Postgres lookup → renders HTML with Chart.js inline
+       ├─► Webhook node serving GET /dashboard    (Mini App HTML — Chart.js)
+       └─► Webhook node serving POST /pool-refill (self-firing pool replenisher)
 ```
 
-77 nodes total. Workflow file: [`workflow.json`](./workflow.json) (re-imports cleanly into a fresh n8n instance).
+95 nodes total. Workflow file: [`workflow.json`](./workflow.json) (re-imports cleanly into a fresh n8n instance).
 
 ---
 
@@ -143,11 +147,22 @@ To get the `@bot search` feature, open [@BotFather](https://t.me/BotFather):
 ```
 /start
 /learn https://martinfowler.com/articles/microservices.html
-# wait ~1–2 min for the summary
-# tap "🎯 Take quiz now"
+# wait ~1–2 min for the summary — while you read it, the pool refill
+# webhook fires in background and Sonnet 4.5 starts generating 3 quizzes
+# tap "🎯 Take quiz now" — by this point 1–3 pool entries are ready,
+# so Q1 arrives in <500ms (instead of waiting another 30-60s)
 # answer the 5 polls
 # /stats → 📈 Open full dashboard
 # /lang → 🇷🇺 Русский → /quiz again to see localized output
+```
+
+If you import an existing database (or add materials before the pool feature is wired up), warm the pool for all existing materials at once:
+
+```bash
+bash tools/warmup-pool.sh both       # fires refill for every material × {en, ru}
+# monitor progress:
+docker compose exec postgres psql -U n8n -d n8n -c \
+  "SELECT material_id, lang, COUNT(*) FROM app.quiz_pool GROUP BY 1,2 ORDER BY 1,2;"
 ```
 
 ---

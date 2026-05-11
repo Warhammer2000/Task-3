@@ -270,6 +270,66 @@ Two new Code nodes (`/learn: build ack text`, `pick: build ack text`) emit local
 
 **Lesson**: every async LLM call ≥ 5 seconds needs a visible-progress ack. Under-promising on timing is worse than over-promising — users abandon a "30-second wait" sooner than they abandon a "1–3 min, grab a coffee" wait.
 
+### 5.9 Quiz pool: pre-generation + self-replenishing buffer
+
+By far the largest UX upgrade. Original design: every `/quiz` callback triggered a synchronous Examiner LLM call (Haiku 4.5, 30-60s). The user tapped "Take quiz" and stared at a "generating..." ack for half a minute before Q1 arrived. Compounded by user feedback that Haiku quality was sometimes spotty for senior-grade question framing.
+
+**Architecture**: a new table `app.quiz_pool` holds pre-generated quizzes, keyed by `(material_id, lang)`. Each entry is a complete 5-question set ready to ship instantly. A dedicated webhook `/webhook/pool-refill` (separate trigger chain in the same n8n workflow) maintains a target depth of **3 entries per material+lang** via a self-firing refill loop:
+
+1. Webhook receives `{material_id, lang}`.
+2. Responds **200 immediately** to the caller (fire-and-forget pattern).
+3. Counts current pool entries.
+4. If `< 3`: loads material content + ALL prior question stems → builds Examiner prompt with strong uniqueness directive + `temperature: 0.9` → calls Sonnet 4.5 → similarity-check the result → INSERTs into pool → fires itself again.
+5. If `>= 3`: chain ends (no recursion).
+
+This is **eventually-consistent self-organising state** — no scheduler, no cron, no external queue. Pool depth equilibrates around 3 entries via the natural feedback loop: every `/quiz` claim depletes the pool by 1, and the post-claim refill trigger pushes it back to 3.
+
+**Pick callback fork**: the existing slow-path Examiner call is now a fallback. The pick callback first attempts an atomic pool claim:
+
+```sql
+DELETE FROM app.quiz_pool
+WHERE id = (
+  SELECT id FROM app.quiz_pool
+  WHERE material_id = ? AND lang = ?
+  ORDER BY generated_at ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING id, material_id, lang, questions;
+```
+
+- **`FOR UPDATE SKIP LOCKED`** — two users on the same material concurrently `/quiz` get different pool entries; neither blocks the other.
+- **`DELETE...RETURNING`** — atomic claim. The pool entry vanishes from the pool the instant it's claimed; no "claimed but not yet started" intermediate state to garbage-collect.
+
+If the claim returns a row, Q1 is sent within ~500ms of the callback. If the claim returns empty (pool empty for this material+lang), the existing slow-path runs (ack message + Examiner LLM call, 30-60s). Either way the user gets the quiz; only the latency differs.
+
+**Strategy in plain terms**: *first user pays the wait, every user after gets instant quizzes*. The first `/learn` of a topic triggers an initial pool refill that runs in the background while the user reads the summary. By the time they tap "Take quiz now", 1-3 pool entries are usually ready. From quiz #2 onward, the bot is effectively instant.
+
+**Model upgrade in the same patch**: Examiner moves from Haiku 4.5 to Sonnet 4.5. Question quality jump is significant for senior-grade framing; the speed cost (10-15s vs 5-10s per generation) is paid in background, not on the user's wait clock.
+
+**Uniqueness guarantees**: three layers stacked.
+
+1. **Temperature `0.9`** during pool generation (vs the default 0 for structured output) — gives the LLM enough freedom to vary phrasing/concepts across pool entries.
+2. **Strong prompt directive**: every pool generation receives ALL prior question stems for this `(material, lang)` combo (`jsonb_array_elements` unpacks every question from every existing pool entry), with an explicit 5-rule "MUST satisfy" list and a self-check step. The "at most 1 overlap" escape hatch exists for genuinely small/exhausted materials — better than the LLM stalling.
+3. **Post-parse similarity check** (`pool: similarity check` Code node): computes Jaccard-bigram similarity for each new question vs every prior. If anything exceeds 0.55 it's logged to `docker logs task3-n8n` for ops visibility. Hard rejection would risk infinite-loop regeneration when a material genuinely is exhausted; logging is the right tradeoff.
+
+Verified on the Microservices Fowler/Lewis article: the first 3 pool entries cover monolith vs microservices decision risk, cross-service data boundary violation, and shared-library coupling — three distinct angles with no paraphrasing.
+
+**Concurrency model**:
+
+- Pool is **shared per (material, lang)**, not per user. Material X has ONE pool, not one-per-user. Two users sharing material X share the same pool. Cheaper to maintain, and `SKIP LOCKED` guarantees they don't claim the same entry.
+- Each `/quiz` claim fires a top-up refill webhook. Refill is single-quiz-per-call and self-propagating until depth hits 3. Multiple users doing `/quiz` in parallel produces multiple parallel refill chains — Anthropic rate-limit (Tier 1: 50 RPM Sonnet) is the real ceiling.
+- `app.user_state.chat_id` is per-user (PRIMARY KEY); pool isn't bound to chat_id at all. When a pool entry is claimed, it gets copied into `app.quizzes` with the claiming user's chat_id, and removed from the pool — user-bound tracking starts only AFTER claim.
+
+**The `tools/warmup-pool.sh` companion script**: for materials added before the pool feature shipped (or after a database restore), this script fires refill triggers for every `(material_id, lang)` combo with `< 3` pool entries. Idempotent — safe to re-run. Documented in `tools/README.md`.
+
+**What this gets you in numbers**:
+
+- Cold quiz (pool empty, slow-path): 30-60s wait, same as before.
+- Warm quiz (pool ≥ 1): <500ms from "tap quiz" to "Q1 arrives". A 60× speedup for the steady-state user.
+- Pool refill cadence: ~40s per entry, ~2 minutes from empty to full depth-3 pool.
+- Anthropic cost: same as before per quiz; we just pay the cost up-front during background time instead of on-demand during user-perceived time.
+
 ---
 
 ## 6. What's intentionally out of scope (for this submission window)

@@ -91,6 +91,42 @@ CREATE TABLE IF NOT EXISTS app.material_reactions (
 );
 
 -- =========================================================================
+-- user_state.lang column — bot UX language preference (added via patch 13)
+-- =========================================================================
+-- Driven by the /lang command's inline-keyboard picker (🇬🇧 English / 🇷🇺 Русский).
+-- Used by /stats: format, /learn: format summary, ans: format results, and as
+-- a directive appended to Teacher & Examiner system prompts.
+
+ALTER TABLE app.user_state
+  ADD COLUMN IF NOT EXISTS lang TEXT
+    NOT NULL DEFAULT 'en'
+    CHECK (lang IN ('en','ru'));
+
+-- =========================================================================
+-- quiz_pool — pre-generated quizzes (added via patch 21)
+-- =========================================================================
+-- Holds 5-question quiz sets keyed by (material_id, lang). A dedicated
+-- webhook (/webhook/pool-refill) maintains depth = 3 via a self-firing
+-- generation chain on Sonnet 4.5. The /quiz pick callback atomically
+-- claims an entry via DELETE...FOR UPDATE SKIP LOCKED RETURNING — pool
+-- entries are claim-and-consume (no "claimed but not taken" state).
+-- See report.md §5.9 and tools/warmup-pool.sh for ops details.
+
+CREATE TABLE IF NOT EXISTS app.quiz_pool (
+    id               SERIAL      PRIMARY KEY,
+    material_id      INTEGER     NOT NULL
+        REFERENCES app.learning_materials(id) ON DELETE CASCADE,
+    lang             TEXT        NOT NULL DEFAULT 'en'
+        CHECK (lang IN ('en','ru')),
+    questions        JSONB       NOT NULL,
+    generated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    generation_model TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_quiz_pool_mat_lang
+  ON app.quiz_pool(material_id, lang);
+
+-- =========================================================================
 -- Helper view: per-chat /stats summary
 -- =========================================================================
 CREATE OR REPLACE VIEW app.v_user_stats AS
