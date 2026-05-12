@@ -66,6 +66,11 @@ services:
       WEBHOOK_URL: ${N8N_WEBHOOK_URL:?N8N_WEBHOOK_URL must be set in .env}
       N8N_EDITOR_BASE_URL: ${N8N_WEBHOOK_URL:?N8N_WEBHOOK_URL must be set in .env}
 
+      # Surfaced to workflow.json so internal webhook calls (Mini App
+      # dashboard URL, pool-refill self-fire) can build absolute URLs via
+      # $env.NGROK_DOMAIN without hardcoding our specific tunnel.
+      NGROK_DOMAIN: ${NGROK_DOMAIN:?NGROK_DOMAIN must be set in .env}
+
       # Trust the ngrok proxy (n8n needs to honour X-Forwarded-* headers
       # to construct correct webhook URLs and cookie security flags).
       N8N_PROXY_HOPS: 1
